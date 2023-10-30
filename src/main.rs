@@ -1,4 +1,5 @@
 mod galaxy;
+mod physics;
 mod screen;
 
 fn main() {

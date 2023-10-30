@@ -1,10 +1,8 @@
-use std::any::Any;
+use crate::physics::{PhysicsObject, PosMass};
 
 pub const SCREEN_SIZE_X: usize = 150;
 pub const SCREEN_SIZE_Y: usize = 45;
 pub const Y_SQUISH: f32 = 0.6;
-
-pub const G_CONSTANT: f32 = 0.02;
 
 pub const DELTA_TIME: f32 = 1.0 / 60.0;
 pub const TIME_SPEED: f64 = 1.0;
@@ -19,39 +17,26 @@ pub fn screen_loop(mut screen: Screen, mut time: Time) {
 
     // For FPS
     let mut time_last = std::time::Instant::now();
+    let mut time_last_sleep = std::time::Instant::now();
 
     loop {
         time.tick();
         screen.tick(&time);
         screen.draw();
-        std::thread::sleep(std::time::Duration::from_secs_f64(time_delta * TIME_SPEED));
+
+        let calc_time = time_last_sleep.elapsed().as_secs_f64();
+
+        std::thread::sleep(std::time::Duration::from_secs_f64(
+            (time_delta - calc_time).max(0.0) * TIME_SPEED,
+        ));
         screen.clear();
 
         // For fps
-        //let difference = time_last.elapsed();
-        //time_last = std::time::Instant::now();
-        //println!("fps {}", 1000.0 / (difference.as_millis() as f32));
+        let difference = time_last.elapsed();
+        time_last = std::time::Instant::now();
+        time_last_sleep = std::time::Instant::now();
+        println!("fps {}", 1000.0 / (difference.as_millis() as f32));
     }
-}
-
-pub trait PhysicsObject: Any {
-    fn get_position(&self) -> [f32; 2];
-
-    fn set_position(&mut self, x: f32, y: f32);
-
-    fn add_position(&mut self, x: f32, y: f32);
-
-    fn add_velocity(&mut self, vx: f32, vy: f32);
-
-    fn tick(&mut self, time: &&Time);
-
-    fn get_force(&mut self) -> &mut Force;
-
-    fn apply_grav_attraction(&mut self, other_pos: [f32; 3]);
-
-    fn get_mass(&self) -> f32;
-
-    fn as_any(&mut self) -> &mut dyn Any;
 }
 
 pub struct Time {
@@ -69,12 +54,20 @@ impl Time {
 }
 
 pub struct Screen {
-    pub screen: [[char; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
-    pub objs: Vec<Box<dyn PhysicsObject>>,
-    pub obj_buffer: [[u32; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
+    screen: [[char; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
+    objs: Vec<Box<dyn PhysicsObject>>,
+    obj_buffer: [[u32; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
 }
 
 impl Screen {
+    pub fn new() -> Self {
+        Screen {
+            screen: [[' '; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
+            objs: Vec::new(),
+            obj_buffer: [[0; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
+        }
+    }
+
     pub fn draw(&self) {
         for y_i in 0..SCREEN_SIZE_Y {
             for x_i in 0..SCREEN_SIZE_X {
@@ -112,7 +105,7 @@ impl Screen {
         self.obj_buffer[y_index][x_index] += position_mass.floor() as u32;
     }
 
-    pub fn set_position(&mut self, x_index: usize, y_index: usize, luminance: char) {
+    fn set_position(&mut self, x_index: usize, y_index: usize, luminance: char) {
         self.screen[y_index][x_index] = luminance;
     }
 
@@ -138,20 +131,32 @@ impl Screen {
         // Get position of all objects and tick the object
         for obj in self.objs.iter_mut() {
             // Save object position in vector
-            let pairs = obj.get_position();
-            let threes = [pairs[0], pairs[1], obj.get_mass()];
+            let pos = obj.get_position();
+            let threes = [pos.x, pos.y, obj.get_mass()];
+
             body_positions.push(threes);
         }
 
         // Loop over objects again and calculate force
         for primary_obj in self.objs.iter_mut() {
             for secondary_pos in body_positions.iter() {
+                // Only calculate forces if the mass present is significant
+
+                #[cfg(not(feature = "starsforces"))]
+                if secondary_pos[2] < 100.0 {
+                    continue;
+                }
+
                 let primary_pos = primary_obj.get_position();
-                let difference_pos = (secondary_pos[0] - primary_pos[0]).abs()
-                    + (secondary_pos[1] - primary_pos[1]).abs();
+                let difference_pos = (secondary_pos[0] - primary_pos.x).abs()
+                    + (secondary_pos[1] - primary_pos.y).abs();
 
                 if difference_pos > 1.0 {
-                    primary_obj.apply_grav_attraction(secondary_pos.clone());
+                    primary_obj.apply_grav_attraction(PosMass {
+                        x: secondary_pos[0],
+                        y: secondary_pos[1],
+                        mass: secondary_pos[2],
+                    });
                 }
             }
         }
@@ -165,103 +170,5 @@ impl Screen {
         for position in body_positions {
             self.draw_position(position[0], position[1], position[2]);
         }
-    }
-}
-
-#[allow(non_snake_case)]
-pub struct Force {
-    pub N_x: f32,
-    pub N_y: f32,
-}
-
-impl Force {
-    pub fn new() -> Self {
-        Force { N_x: 0.0, N_y: 0.0 }
-    }
-
-    pub fn reset(&mut self) {
-        self.N_x = 0.0;
-        self.N_y = 0.0;
-    }
-
-    pub fn to_velocity(&self, mass: f32, time: &Time) -> [f32; 2] {
-        let x = self.N_x / mass * time.delta_time();
-        let y = self.N_y / mass * time.delta_time();
-
-        [x, y]
-    }
-}
-
-pub struct Body {
-    pub x: f32,
-    pub y: f32,
-    pub vx: f32,
-    pub vy: f32,
-    pub mass: f32,
-    pub force: Force,
-}
-
-impl PhysicsObject for Body {
-    fn get_position(&self) -> [f32; 2] {
-        return [self.x, self.y];
-    }
-
-    fn set_position(&mut self, x: f32, y: f32) {
-        self.x = x;
-        self.y = y;
-    }
-
-    fn add_position(&mut self, x: f32, y: f32) {
-        self.x += x;
-        self.y += y;
-    }
-
-    fn add_velocity(&mut self, vx: f32, vy: f32) {
-        self.vx += vx;
-        self.vy += vy;
-    }
-
-    fn tick(&mut self, time: &&Time) {
-        // Body physics
-        let mass = self.mass;
-
-        // Calculate new velocity
-        let velocity_diff = self.force.to_velocity(mass, time);
-        self.add_velocity(velocity_diff[0], velocity_diff[1]);
-
-        // Calculate new position
-        let position_diff = [self.vx * time.delta_time(), self.vy * time.delta_time()];
-        self.add_position(position_diff[0], position_diff[1]);
-
-        // After movement, reset forces
-        self.force.reset();
-    }
-
-    fn get_force(&mut self) -> &mut Force {
-        &mut self.force
-    }
-
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn get_mass(&self) -> f32 {
-        self.mass
-    }
-
-    fn apply_grav_attraction(&mut self, other_pos: [f32; 3]) {
-        let other_mass = other_pos[2];
-
-        let mut x_hat = other_pos[0] - self.x;
-        let mut y_hat = other_pos[1] - self.y;
-
-        let size = (x_hat.powf(2.0) + y_hat.powf(2.0)).sqrt();
-
-        x_hat /= size;
-        y_hat /= size;
-
-        let force = G_CONSTANT * self.mass * other_mass / size.powf(2.0);
-        self.force.N_x += force * x_hat;
-        self.force.N_y += force * y_hat;
     }
 }

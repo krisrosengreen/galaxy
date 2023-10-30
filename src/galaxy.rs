@@ -1,8 +1,9 @@
+use crate::physics::{Body, Force, G_CONSTANT};
 use crate::screen::*;
 use rand::prelude::*;
 
 const STAR_MIN_R: f32 = 2.0;
-const STAR_MAX_R: f32 = 16.0;
+const STAR_MAX_R: f32 = 22.0;
 const STAR_MASS: f32 = 1.0;
 
 pub fn get_orbit_speed(radius: f32, center_mass: f32) -> f32 {
@@ -70,17 +71,13 @@ pub fn create_galaxy(
 }
 
 pub fn run_system() {
-    let mut screen = Screen {
-        screen: [[' '; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
-        objs: Vec::new(),
-        obj_buffer: [[0; SCREEN_SIZE_X]; SCREEN_SIZE_Y],
-    };
+    let mut screen = Screen::new();
 
     let time = Time { current_time: 0.0 };
 
-    create_galaxy(&mut screen, 20.0, 20.0, 10000.0, 200, 8.0, 0.0);
+    create_galaxy(&mut screen, 20.0, 20.0, 100000.0, 600, 6.0, 0.0);
 
-    create_galaxy(&mut screen, 80.0, 50.0, 10000.0, 200, -4.0, -6.5);
+    create_galaxy(&mut screen, 80.0, 50.0, 100000.0, 200, -3.0, -5.5);
 
     screen_loop(screen, time);
 }
